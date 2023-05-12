@@ -1,0 +1,421 @@
+---
+title: " **Chess.com: Exploratory Data Analysis** "
+subtitle: "Manipulating & Visualizing chess.com Game Data"
+author: "Reece Iriye, 1549 words"
+format: 
+  html:
+    link-citations: true
+    toc: true
+    embed-resources: true
+    code-fold: false
+    code-line-numbers: true
+    code-summary: "SHOW ME THE CODE!"
+    code-tools: true
+    theme: solar
+editor: visual
+---
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+library(reshape2)
+library(tidyverse)
+library(ggplot2)
+library(plotly)
+library(DT)
+library(formattable)
+library(reactable)
+library(lubridate)
+library(patchwork)
+
+```
+
+## **Introduction**
+
+![](chess_image.png){width=600}
+
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+chess.data.raw <- read.csv("~/Desktop/stat3341/da1/chess_data.csv")
+```
+
+Chess.com is a website where players can match-make against one another to play games of chess. Players are typically matched against one another based on their skill level, and the website's welcoming interface has caused it to boost in popularity in recent years. Ordinary people are making the decision to learn chess because of <a href="https://www.chess.com">chess.com</a>'s convenience, and it's even become popular to watch high-rated players matchmake against random stranger similarly ranked to them on streaming sites like Twitch.  
+
+Because of the newfound hype around chess.com, I have decided to make a analyze a dataset of high-rated players' games and how well they performed. Throughout my analysis, I focuses on the performance of the highest rated players of the dataset, and I also measured how players performed overall depending on whether they were playing as white or black.  
+
+## **Data Overview**
+
+### **Issues with the Data**
+
+The original dataset converted win indicators from `1-0` to a date-time variable `Jan-00`, so I cleaned those elements of the dataset by converting wins back to `1-0`. Additionally, for the specific player of interest in each row for the game data, I added a column to indicate the outcome of the game from the perspective of the player of interest. Below is a table of the players in the dataset who won the most amount of games.
+
+
+### **Player Results**
+
+While the original dataset is intuitive on its own with the stories that the columns already have the potential to tell, I believe a `Result` column will be essential displaying the outcome of the game from the perspective of the player of interest. 
+
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+# Replace "Jan-00" with "1-0"
+chess.data.raw$Result[chess.data.raw$Result == "Jan-00"] <- "1-0"
+
+# Add column indicating if a player won or drew
+chess.data <- chess.data.raw %>%
+  mutate(Outcome = if_else(Player == "WhitePlayerName",
+                           if_else(Result == "1-0",
+                                   "Win", 
+                                   if_else(Result == "0-1",
+                                                  "Loss", "Draw")),
+                           if_else(Result == "1-0",
+                                   "Loss", 
+                                   if_else(Result == "0-1",
+                                                   "Win", "Draw"))))
+
+# Report table of 10 players with most wins in the entire dataset
+most.wins <- chess.data %>%
+  group_by(Name) %>%
+  summarize("Win Count" = sum(if_else(Outcome == "Win", 1, 0))) %>%
+  arrange(desc(.data$"Win Count"))
+
+most.wins.10 <- most.wins[1:10,]
+
+```
+
+With this information, I compiled a list of the top 10 players with the most wins in our dataset. 
+
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+# Output the players with the most wins
+formattable::formattable(most.wins.10, 
+                         align = c("l","r"),
+                         list(
+                           "Win Count" = color_bar("cyan")))
+```
+
+Hikaru Nakamura outperforms all other players by a longshot with 234 wins, outperforming the 2nd best performer in our dataset (Baadur Jodava) who has 145 wins. Nakamura could likely have this win count, because he is frequently active on chess.com. 
+
+I believe we should now explore chess.com's internal rating system, so that we can understand how the website ranks players based on metrics that they believe evaluate them to the best of their ability. Observing whether or not Nakamura has one of the higher ratings may help us determine whether or not he may be one of the best players in our dataset.
+
+### **ELO Ratings**
+
+Each player is assigned an "ELO Rating". In short, an ELO rating is meant to estimate a player's skill-level, and the higher a player's rating is, the better they are estimated to be at playing chess. Chess.com uses multiple variables to calculate ELO, but to explain the ranking system simply, a player's ELO increases as players win and draw other players who are ranked higher than them in most cases, and it decreases otherwise. More information about Chess ELO and how chess.com specifically calculates player ELO for giving players a rating can be found <a href="https://www.chess.com/terms/elo-rating-chess">here</a>.
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+# Create Player & Opponent ELO Columns
+chess.data <- chess.data %>%
+  mutate(PlayerElo = if_else(Player == "WhitePlayerName", WhiteElo, BlackElo)) %>%
+  mutate(OpponentElo = if_else(Player == "BlackPlayerName", WhiteElo, BlackElo))
+
+```
+
+Here is a distribution of each individual player's average rating within the dataset. 
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+# Player average ratings
+avg.ratings <- chess.data %>%
+  group_by(Name) %>%
+  summarize("Player Ratings" = mean(PlayerElo, na.rm = TRUE))
+
+
+# Plot a histogram of ratings
+p1 <- ggplot(avg.ratings, aes(x = .data$"Player Ratings")) +
+  geom_histogram(bins = 100,
+                 color = "black",
+                 fill = "#A161D9") +
+  labs(title = "Distribution of Average Player Ratings",
+       x = "Player Ratings",
+       y = "# of Players") + 
+  theme_bw()
+
+ggplotly(p1)
+
+```
+
+It shows that most players' average ratings were at least above 2000, meaning that most players highlighted are at least at the Master level or higher. It appears as if around half of the players have a rating of 2400 or higher, which shows that our dataset consists of games primarily from GrandMasters. Players with these ELO's are exceptional at playing chess, so it may be interesting to observe whether or not the ELO system in chess.com is accurate in determining strength for players at this skill level and above. 
+
+
+### **Game Outcomes**
+
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+# Determine number of unique matches
+unique.matches <- length(unique(chess.data$game_id))
+
+# Determine number of unique players in the dataset
+unique.players <- length(unique(chess.data$Name))
+
+# Total Draws
+chess.data.inivgame <- chess.data %>%
+  distinct(game_id, .keep_all = TRUE)
+
+unique.draws <- chess.data.inivgame %>%
+  group_by(Outcome) %>%
+  summarize(draw.count = sum(if_else(Outcome == "Draw", 1, 0))) %>%
+  pull(draw.count)
+  
+unique.draws <- unique.draws[1]
+
+```
+
+Within our data, a total of `r unique.matches` unique matches have been played, `r unique.players` unique players are included in the whole dataset, and `r unique.draws` games have resulted in draws. Here is a barplot indicating the results summary in our dataset. 
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+p4 <- ggplot(chess.data.inivgame, aes(x=Result)) +
+  geom_bar(color = "black", fill=c("0-1" = "red", "1-0" = "#15C825", "1/2-1/2" = "#EFEF22")) +
+  labs(x = "Game Results", 
+       y = "Frequency", 
+       title = "Frequency of Wins, Draws, and Losses") +
+  theme_bw()
+
+ggplotly(p4)
+```
+
+This barplot shows that most games resulted in White winning the game. There is a chance that our dataset may be restricted because all players rated as Masters and above may not be included. Because of that, it may not necessarily tell a full story of high-rated raters, but from what I am able to see so far, I am making an assumption that because of the small inherent advantage that players have when making the first move in the game as White, playing as White may give high-rated players a better chance of winning the game than playing as Black. This claim makes sense in some capacity, especially when understanding that high-ranking players rarely play huge blunders (major mistakes) when they play games. 
+
+
+## **Results**
+
+### **Player Summary**
+To understand factors like Player ELO and player outcomes, it is important to observe overall results from the perspective of players themselves. More specifically, I believe that creating a player summary table and observing how top players performed on an overall scale can help us understand this data on a more individual level. Below is a summary table from the player perspective, in descending order of `Total Wins`. 
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+summary.table <- chess.data %>%
+  group_by(Name) %>%
+  summarize("Games Played" = n(),
+            "Average Moves per Game" = round(sum(NMoves) / n(), 1),
+            "Total Wins" = sum(if_else(Outcome == "Win", 1, 0)),
+            "Win Percentage (%)" = round((sum(if_else(Outcome == "Win", 1, 0)) / n()) * 100, 2),
+            "Average ELO Score" = round(mean(PlayerElo, na.rm = TRUE), 0),
+            "Average Opponent ELO Score" = round(mean(OpponentElo, na.rm = TRUE), 0)) %>%
+  arrange(desc(.data$"Total Wins")) %>%
+  slice(1:20) # only get the top 20 players to display
+
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+# https://www.littlemissdata.com/blog/prettytables
+improvement_formatter1 <- formatter("span", 
+                                   style = x ~ style(font.weight = "bold", 
+                                                     color = if_else(summary.table$"Average ELO Score" > summary.table$"Average Opponent ELO Score", "#47AA44", if_else(summary.table$"Average ELO Score" < summary.table$"Average Opponent ELO Score", "#FF4D4D", "black"))), 
+                                   x ~ icontext(if_else(summary.table$"Average ELO Score" > summary.table$"Average Opponent ELO Score", "arrow-up", "arrow-down"), x)
+                                   )
+
+
+improvement_formatter2 <- formatter("span", 
+                                   style = x ~ style(font.weight = "bold", 
+                                                     color = if_else(summary.table$"Average ELO Score" < summary.table$"Average Opponent ELO Score", "#47AA44", if_else(summary.table$"Average ELO Score" > summary.table$"Average Opponent ELO Score", "#FF4D4D", "black"))), 
+                                   x ~ icontext(if_else(summary.table$"Average ELO Score" < summary.table$"Average Opponent ELO Score", "arrow-up", "arrow-down"), x)
+                                   )
+# Create formattable object
+formattable::formattable(summary.table, 
+                         align = c("l", "c", "c", "c", "r", "c", "c"),
+                         list(
+                           "Games Played" = color_tile("#012A35", "#00ADFD"),
+                           "Win Percentage (%)" = color_bar("#FDFF9F"),
+                           "Average ELO Score" = improvement_formatter1,
+                           "Average Opponent ELO Score" = improvement_formatter2
+                         ))
+
+```
+
+In this table, we can see that Hikaru Makamura won the most games in part because he played more games than the rest of the top players in the dataset. Nevertheless, he still has a pretty high win percentage, which leads us to believe that he consistently performs extremely well against high-ranking players. His average opponent's rating is less than his average rating, but the average rating of players he competes against is still extremely high at 2650. 
+
+Observing the players with the top 5 wins in our dataset, let's use a Violin Plot to visualize exactly what rated players our top competitors tend to play against. 
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+# Box and whiskers plot of 5 top rated players with their 
+top.players <- list("Hikaru Nakamura", "Alexander Grischuk", "David Paravyan", "Dmitry Vladimirovich Andreikin", "David Wei Liang Howell")
+
+# Data is already in long form
+top.data <- chess.data %>%
+  filter(Name %in% top.players) %>%
+  filter(OpponentElo > 1500) # Remove double-digit rating outlier
+  
+p3 <- ggplot(top.data, aes(x=Name, y=OpponentElo, color=Outcome)) +
+  geom_violin(color="black", fill="cyan") + 
+  geom_point(alpha = 0.2) +
+  theme(legend.position = "top") +
+  theme_bw() +
+  labs(title="Opponent Ratings & Game Outcomes for Top-Rated Players") +
+  scale_color_manual(values = c("Win" = "#15C825", "Draw" = "#EFEF22", "Loss" = "red"))
+
+ggplotly(p3)
+  
+```
+
+The vast majority of players these people are ranked between 2400 - 2900. We can see that Nakamura is playing the highest-rated competitors on average than the rest of these players. Griscuk is playing against opponents of similary ranked ELO's to Nakamura, and the other players are competing against players with a little bit lower ratings—still extremely high and competitive nevertheless.
+
+
+
+### **Individual Highest ELO**
+
+Observing exactly who had the highest ELO is important as well in determining whether or not the ELO system accurately ranks players at the GrandMaster level and above. Here is a table of players' highest single-moment ELO's.
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+# Highest ELO score:
+max.Elo.index <- which.max(chess.data$PlayerElo)
+
+# Pull necessary information
+max.Elo.data <- chess.data %>%
+  distinct(game_id, .keep_all = TRUE) %>%
+  arrange(desc(PlayerElo)) %>%
+  distinct(Name, .keep_all = TRUE) %>%
+  slice(1:15) %>%
+  select(PlayerElo, game_id, Name) %>%
+  summarize("Game ID" = game_id,
+            "Player with Max ELO" = Name,
+            "Maximum Player ELO" = PlayerElo)
+
+# Change index
+row.names(max.Elo.data) <- NULL
+
+# Output table
+formattable(max.Elo.data,
+            align = c("c", "c", "c"),
+            list(
+              "Maximum Player ELO" = color_tile("#A161D9", "#BB0AFA")
+            ))
+
+```
+
+
+Nakamura once again makes it to the top of our dataset. He had a maximum high rating of 3223, showcasing that it may be accurate to justify win count as a measure of competitiveness and skill in playing chess on chess.com.
+
+### **Lowest Move Count**
+
+Chess games typically have around <a href-"https://www.alexcrompton.com/blog/time-thoughts-chess">40</a> moves in the game, however some games last much longer or much shorter. Below is a summary tale of the games with the lowest number of moves in a game.  
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+lowest.moves <- chess.data %>%
+  distinct(game_id, .keep_all = TRUE) %>%
+  arrange(NMoves) %>%
+  slice(1:15) %>%
+  summarize("Game ID" = game_id,
+            "Date" = Date,
+            "Move Count" = NMoves)
+
+# Output Table
+formattable(lowest.moves,
+            align = c("c", "c", "r"),
+            list(
+              "Move Count" = color_bar("#9AEDEB")
+             )
+            )
+```
+
+
+Here, we can see clearly that some of these games with grandmasters in our dataset lasted exceedingly short. Some opening traps exist in chess where players checkmate other players within the first couple of moves, however that is not likely the case here. In chess.com, players have the option to resign a game at all points, so these games may have ended quickly because one of these players had to leave. We can see, however, that there are not many of these games, showcasing that players with high ratings are reluctant to leave games early because it could negatively impact their ELO, thus impacting their reputation. 
+
+
+### **Biggest Upsets**
+
+It is pretty rare for players to defeat players exceedingly higher rated than them, because ELO is an indicator of skill. However, it still happens at some points. Here is a table of the biggest upsets that have occurred on chess.com for these grandmasters. 
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+# Upset: a match when the player with the lower Elo score wins
+biggest.upset <- chess.data %>%
+  mutate("ELO Difference" = OpponentElo - PlayerElo) %>%
+  filter(.data$"ELO Difference" > 0) %>%
+  arrange(desc(.data$"ELO Difference")) %>%
+  mutate(Upset = if_else(Outcome == "Win", 1, 0)) %>%
+  filter(Upset == 1) %>%
+  slice(1:10) %>%
+  summarize("Game ID" = game_id,
+            "Date" = Date,
+            "Underdog" = Name,
+            "Player ELO" = PlayerElo,
+            "Opponent ELO" = OpponentElo,
+            "ELO Difference" = .data$"ELO Difference")
+
+# Output table
+formattable(biggest.upset,
+            align = c("c", "c", "c", "c", "c", "c"),
+            list(
+              "ELO Difference" = color_tile("#E36615", "red")
+            ))
+```
+
+For a player to have a double-digit ranking, they have to be pretty terrible at the game, especially considering that each player starts at a rating of 800 immediatley upon creating an account. Players with highly differentiating ELO's aren't matchmaked with each other either, meaning that these players willingly chose to play each other, or they faced each other in a chess.com tournament. I believe that the double-digit rating players defeating GrandMasters was just an experiment between these two players. However, for the upsets that follow, I believe that these low-rated players played fantastic games and ended up defeating their opponents. That may be the case, or their high-rated competitors made terrible blunders. 
+
+
+### **Game Outcome Classification Based on Ratings**
+
+I think we have enough data to observe how the ratings of White and Black directly impact the chances of whether or not they will win. I plotted `White ELO` versus `Black ELO` to determine exactly how ratings as White and Black effect who may win and who may lose. I excluded major outliers. 
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+# Violin
+p2 <- ggplot(chess.data.inivgame, aes(x=WhiteElo, y=BlackElo, color=Result)) +
+  geom_point(alpha = 0.2) +
+  theme_bw() +
+  scale_color_manual(values = c("1-0" = "#15C825", "1/2-1/2" = "#EFEF22", "0-1" = "red")) +
+  xlim(2400, 2900) +
+  ylim(2400, 2900) +
+  labs(title = "Scatterplot of White and Black ELO's Grouped by Game Result")
+  
+ggplotly(p2)
+
+```
+
+Based on our data, we can see that ELO is a pretty good measure of whether or not White or Black will win. We can see that our plot is overwhelmingly green, because white just wins more often. However, higher ranking Black players do tend to defeat lower-rated White players. The opposite is true as well. There are a lot of drawing games and games where White wins in points on the scatterplot where White and Black are similarly ranked.
+
+
+## **Conclusion**
+
+I can conclude that ELO is a decently good measure of skill for determining how good players are good. White, however, tends to defeat Black when high-rated players are playing against one another. There are clear limitations to this dataset. For example, we only have a subset of game data for players in these rating categories. Nevertheless, I do believe my conclusions are pretty solid.
+
